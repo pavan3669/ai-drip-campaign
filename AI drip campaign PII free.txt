@@ -69,8 +69,6 @@ Information System,11.0401
 Mechanical Engineering,14.1901
 Biology,26.0101
 Business Analytics,52.1301
-Unknown Topic,
-,11.0701
 tests/test_matching.py
 import unittest
 from main import normalize, family, best_match
