@@ -1,0 +1,91 @@
+import csv
+from collections import Counter
+from difflib import SequenceMatcher
+from pathlib import Path
+import re
+ROOT = Path(__file__).resolve().parent
+DATA = ROOT / "data"
+RESULTS = ROOT / "results"
+REVIEW_THRESHOLD = 0.72
+def normalize(value: str) -> str:
+value = value.lower().replace("&", " and ")
+value = re.sub(r"[^a-z0-9]+", " ", value)
+return " ".join(value.split())
+def read_csv(path: Path) -> list[dict[str, str]]:
+with path.open(newline="", encoding="utf-8") as handle:
+return list(csv.DictReader(handle))
+def family(code: str) -> str:
+match = re.match(r"^(\d{2})(?:\.|$)", code.strip())
+return match.group(1) if match else ""
+def best_match(interest: str, code: str, catalog: list[dict[str, str]]):
+if not interest.strip():
+return {"suggested_program": "", "score": "", "status": "No interest"}
+exact = [row for row in catalog if normalize(row["program"]) == normalize(interest)]
+if exact:
+return {"suggested_program": exact[0]["program"], "score": "1.00", "status": "Exact"}
+candidates = [row for row in catalog if family(row["code"]) == family(code)]
+if not candidates:
+candidates = catalog
+ranked = sorted(
+((SequenceMatcher(None, normalize(interest), normalize(row["program"])).ratio(), row)
+for row in candidates),
+key=lambda item: item[0], reverse=True,
+)
+if not ranked:
+return {"suggested_program": "", "score": "", "status": "Needs review"}
+score, row = ranked[0]
+status = "Suggested" if score >= REVIEW_THRESHOLD else "Needs review"
+# Do not publish a low-confidence mapping as a confirmed program.
+return {"suggested_program": row["program"] if status == "Suggested" else "",
+"score": f"{score:.2f}", "status": status}
+def process():
+catalog = read_csv(DATA / "program_catalog.csv")
+interests = read_csv(DATA / "synthetic_interests.csv")
+output = []
+for row in interests:
+match = best_match(row["interest"], row["subject_code"], catalog)
+output.append({"interest": row["interest"], "subject_code": row["subject_code"], **match})
+RESULTS.mkdir(exist_ok=True)
+with (RESULTS / "matching_results.csv").open("w", newline="", encoding="utf-8") as handle:
+writer = csv.DictWriter(handle, fieldnames=["interest", "subject_code", "suggested_program", "score", "status"])
+writer.writeheader()
+writer.writerows(output)
+print("Processed", len(output), "synthetic categories")
+print("Status counts:", dict(Counter(row["status"] for row in output)))
+if __name__ == "__main__":
+process()
+data/program_catalog.csv
+program,code
+Computer Science,11.0701
+Information Systems,11.0401
+Mechanical Engineering,14.1901
+Biological Sciences,26.0101
+Business Analytics,52.1301
+Psychology,42.0101
+data/synthetic_interests.csv
+interest,subject_code
+Computer Science,11.0701
+Information System,11.0401
+Mechanical Engineering,14.1901
+Biology,26.0101
+Business Analytics,52.1301
+Unknown Topic,
+,11.0701
+tests/test_matching.py
+import unittest
+from main import normalize, family, best_match
+CATALOG = [{"program": "Computer Science", "code": "11.0701"},
+{"program": "Biological Sciences", "code": "26.0101"}]
+class MatchingTests(unittest.TestCase):
+def test_normalization(self):
+self.assertEqual(normalize(" Computer & Information "), "computer and information")
+def test_family(self):
+self.assertEqual(family("11.0701"), "11")
+self.assertEqual(family("invalid"), "")
+def test_exact(self):
+self.assertEqual(best_match("computer science", "11.0701", CATALOG)["status"], "Exact")
+def test_blank(self):
+self.assertEqual(best_match("", "11.0701", CATALOG)["status"], "No interest")
+if __name__ == "__main__":
+unittest.main()
+
